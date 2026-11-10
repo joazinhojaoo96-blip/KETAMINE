@@ -54,16 +54,56 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             ONLY_ACTIVE_ARCH=NO
 
-      - name: Collect product
+      - name: Package IPA
+        env:
+          CERT_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          CERT_PASS: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          PROFILE: ${{ secrets.APPLE_PROVISION_PROFILE }}
         run: |
+          set -euo pipefail
           APP=$(find DerivedData/Build/Products -maxdepth 3 -name 'Ketamine.app' | head -n 1)
           test -n "$APP" || { echo "Ketamine.app not produced"; exit 1; }
+
+          rm -rf package
+          mkdir -p package/Payload
+          ditto "$APP" package/Payload/Ketamine.app
           ditto -c -k --keepParent "$APP" Ketamine-unsigned.zip
+
+          # Optional: sign when the repo has certificate + profile secrets,
+          # otherwise ship the unsigned IPA for TrollStore / ESign / SideStore.
+          if [ -n "$CERT_P12" ] && [ -n "$PROFILE" ]; then
+            echo "Signing with provided certificate"
+            KEYCHAIN_PASS=$(uuidgen)
+            security create-keychain -p "$KEYCHAIN_PASS" build.keychain
+            security set-keychain-settings -lut 21600 build.keychain
+            security unlock-keychain -p "$KEYCHAIN_PASS" build.keychain
+            security list-keychains -d user -s build.keychain login.keychain
+            printf '%s' "$CERT_P12" | base64 --decode > cert.p12
+            security import cert.p12 -k build.keychain -P "$CERT_PASS" -T /usr/bin/codesign
+            security set-key-partition-list -S apple-tool:,apple:,codesign: \
+              -k "$KEYCHAIN_PASS" build.keychain >/dev/null
+            printf '%s' "$PROFILE" | base64 --decode > package/Payload/Ketamine.app/embedded.mobileprovision
+            security cms -D -i package/Payload/Ketamine.app/embedded.mobileprovision > profile.plist
+            /usr/libexec/PlistBuddy -x -c 'Print Entitlements' profile.plist > entitlements.plist
+            IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep -m1 'Apple' | sed -E 's/.*"(.+)".*/\1/')
+            echo "Identity: $IDENTITY"
+            codesign --force --sign "$IDENTITY" --entitlements entitlements.plist \
+              --timestamp=none package/Payload/Ketamine.app
+            codesign --verify --verbose=2 package/Payload/Ketamine.app
+          else
+            echo "No signing secrets — packaging unsigned IPA"
+          fi
+
+          rm -f Ketamine.ipa
+          (cd package && zip -qry ../Ketamine.ipa Payload)
+          unzip -l Ketamine.ipa | head -n 5
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Ketamine-unsigned-${{ github.sha }}
-          path: Ketamine-unsigned.zip
+          name: Ketamine-${{ github.sha }}
+          path: |
+            Ketamine.ipa
+            Ketamine-unsigned.zip
           retention-days: 7
           if-no-files-found: error
