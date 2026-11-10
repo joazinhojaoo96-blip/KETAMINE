@@ -17,11 +17,25 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
+      - name: Select Xcode (iOS 26 SDK required)
+        run: |
+          set -euo pipefail
+          # Theme.swift uses the Liquid Glass SwiftUI APIs (glassEffect,
+          # GlassEffectContainer, .glassProminent) — they only exist in the
+          # iOS 26+ SDK, and the image default is often an older Xcode.
+          candidates=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V)
+          echo "Installed:"; printf '%s\n' "$candidates"
+          pick=$(printf '%s\n' "$candidates" | grep -E 'Xcode_26\.[0-9]+(\.[0-9]+)?\.app$' | tail -n 1 || true)
+          if [ -z "$pick" ]; then pick=$(printf '%s\n' "$candidates" | tail -n 1); fi
+          echo "Picking $pick"
+          sudo xcode-select -s "$pick"
+          xcodebuild -version
+          xcodebuild -sdk iphoneos -version
 
       - name: Toolchain
         run: |
-          xcodebuild -version
           swift --version
           xcodegen --version || brew install xcodegen
 
