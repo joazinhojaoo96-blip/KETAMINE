@@ -1,0 +1,55 @@
+name: build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios:
+    name: iOS compile check
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          xcodegen --version || brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build (unsigned, generic iOS)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Ketamine.xcodeproj \
+            -scheme Ketamine \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            ONLY_ACTIVE_ARCH=NO
+
+      - name: Collect product
+        run: |
+          APP=$(find DerivedData/Build/Products -name 'Ketamine.app' -maxdepth 3 | head -n 1)
+          test -n "$APP" || { echo "Ketamine.app not produced"; exit 1; }
+          ditto -c -k --keepParent "$APP" Ketamine-unsigned.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ketamine-unsigned-${{ github.sha }}
+          path: Ketamine-unsigned.zip
+          retention-days: 7
+          if-no-files-found: error
