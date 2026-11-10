@@ -42,7 +42,7 @@ jobs:
 
       - name: Collect product
         run: |
-          APP=$(find DerivedData/Build/Products -name 'Ketamine.app' -maxdepth 3 | head -n 1)
+          APP=$(find DerivedData/Build/Products -maxdepth 3 -name 'Ketamine.app' | head -n 1)
           test -n "$APP" || { echo "Ketamine.app not produced"; exit 1; }
           ditto -c -k --keepParent "$APP" Ketamine-unsigned.zip
 
